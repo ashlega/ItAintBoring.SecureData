@@ -33,14 +33,54 @@ namespace ITAintBoring.SecureData.Plugins
             }
         }
 
-       
+        public void ExecuteAttachmentRetrieve(IOrganizationService service, IPluginExecutionContext context)
+        {
+            Entity entity = (Entity)context.OutputParameters["BusinessEntity"];
+            
+            if (!entity.Contains("body")) return; //to prevent recursion
+            //try
+            //{
+               
+                if (!entity.Contains("activityid")) {
+                    entity = service.Retrieve(entity.LogicalName, entity.Id, new ColumnSet("activityid"));
+                }
+                
+                EntityReference activityId = (EntityReference)entity["activityid"];
+                //throw new InvalidPluginExecutionException(activityId.LogicalName);
+                QueryExpression qe = new QueryExpression("email");
+                qe.ColumnSet = new ColumnSet("ita_securedata");
+                qe.Criteria.AddCondition(new ConditionExpression("activityid", ConditionOperator.Equal, activityId.Id));
+                LinkEntity le = new LinkEntity("email", "ita_securedata", "ita_securedata", "ita_securedataid", JoinOperator.LeftOuter);
+                le.EntityAlias = "securedata";
+                qe.LinkEntities.Add(le);
+                le.Columns = new ColumnSet("ita_securedataid");
+
+                var activity = service.RetrieveMultiple(qe).Entities.FirstOrDefault();
+
+                if(activity.Contains("ita_securedata") && !activity.Contains("securedata.ita_securedataid"))
+                {
+                    throw new InvalidPluginExecutionException("Cannot download this attachment!");
+                }
+                /*
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidPluginExecutionException(ex.Message);
+            }
+            */
+        }
+
+
         public void ExecuteUpdateCreate(IOrganizationService service, IPluginExecutionContext context)
         {
             string protectedEmail = "This is a protected email!";
 
             Entity target = (Entity)context.InputParameters["Target"];
+
+            
             Entity postImage = null;
             if (context.PostEntityImages.Contains("PostImage")) postImage = (Entity)context.PostEntityImages["PostImage"];
+
             Entity preImage = null;
             if (context.PreEntityImages.Contains("PreImage")) preImage = (Entity)context.PreEntityImages["PreImage"];
 
@@ -51,7 +91,7 @@ namespace ITAintBoring.SecureData.Plugins
                                        || preImage != null && target["ita_issecure"] != null && (bool)preImage["ita_issecure"] != (bool)target["ita_issecure"]);
             bool isSecure = target.Contains("ita_issecure") && target["ita_issecure"] != null && (bool)target["ita_issecure"] == true;
             Entity secureData = null;
-
+            
             if (isSecureChanged)
             {
                 if (isSecure)
@@ -73,7 +113,7 @@ namespace ITAintBoring.SecureData.Plugins
             }
             else if(target.Contains("description"))
             {
-                if (preImage.Contains("ita_securedata"))
+                if (preImage != null && preImage.Contains("ita_securedata"))
                 {
                     secureData = new Entity("ita_securedata");
                     secureData["ita_details"] = target["description"];
@@ -81,8 +121,8 @@ namespace ITAintBoring.SecureData.Plugins
                     service.Update(secureData);
                 }
             }
-            
 
+            
 
             //Changing statuses
             if (target.Contains("statuscode"))
@@ -106,9 +146,9 @@ namespace ITAintBoring.SecureData.Plugins
                 else
                 {
                     //Need to hide the description again
-                    if (preImage == null
-                        || preImage.Contains("ita_issecure") && (bool)preImage["ita_issecure"] == true && (!target.Contains("ita_issecure") || isSecure)
-                        || !preImage.Contains("ita_issecure") && isSecure)
+                    if (preImage == null && target.Contains("ita_issecure") && target["ita_issecure"] != null && (bool)target["ita_issecure"] == true
+                        || preImage != null && preImage.Contains("ita_issecure") && (bool)preImage["ita_issecure"] == true && (!target.Contains("ita_issecure") || isSecure)
+                        || preImage != null && !preImage.Contains("ita_issecure") && isSecure)
                     {
                         target["description"] = protectedEmail;
                     }
@@ -124,16 +164,26 @@ namespace ITAintBoring.SecureData.Plugins
             IOrganizationServiceFactory serviceFactory = (IOrganizationServiceFactory)serviceProvider.GetService(typeof(IOrganizationServiceFactory));
             IOrganizationService service = serviceFactory.CreateOrganizationService(context.UserId);
 
-            if (context.Stage == 40)
+            if (context.PrimaryEntityName == "email")
             {
-                if (context.MessageName == "Retrieve")
+                if (context.Stage == 40)
                 {
-                    ExecuteRetrieve(service, context);
+                    if (context.MessageName == "Retrieve")
+                    {
+                        ExecuteRetrieve(service, context);
+                    }
+                }
+                else if (context.MessageName == "Update" || context.MessageName == "Create")
+                {
+                    ExecuteUpdateCreate(service, context);
                 }
             }
-            else if (context.MessageName == "Update" || context.MessageName == "Create")
+            else if(context.PrimaryEntityName == "activitymimeattachment")
             {
-                ExecuteUpdateCreate(service, context);
+                if(context.MessageName == "Retrieve")
+                {
+                    ExecuteAttachmentRetrieve(service, context);
+                }
             }
 
         }
